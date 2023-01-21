@@ -1,8 +1,6 @@
 #include "ltme_node/ltme_node.h"
-
 #include <arpa/inet.h>
-
-#include <sensor_msgs/LaserScan.h>
+#include "sensor_msgs/msg/laser_scan.hpp"
 
 const std::string LidarDriver::DEFAULT_ENFORCED_TRANSPORT_MODE = "none";
 const std::string LidarDriver::DEFAULT_FRAME_ID = "laser";
@@ -13,6 +11,7 @@ const double LidarDriver::ANGLE_MAX_LIMIT = 3.142;
 const double LidarDriver::DEFAULT_ANGLE_EXCLUDED_MIN = -3.142;
 const double LidarDriver::DEFAULT_ANGLE_EXCLUDED_MAX = -3.142;
 const double LidarDriver::RANGE_MIN_LIMIT = 0.05;
+const double LidarDriver::RANGE_MAX_LIMIT_NO_INIT = -1;
 const double LidarDriver::RANGE_MAX_LIMIT_02A = 30;
 const double LidarDriver::RANGE_MAX_LIMIT_R1 = 30;
 const double LidarDriver::RANGE_MAX_LIMIT_R2 = 30;
@@ -23,86 +22,116 @@ const int LidarDriver::DEFAULT_SHADOW_FILTER_STRENGTH = 50;
 const int LidarDriver::DEFAULT_RECEIVER_SENSITIVITY_BOOST = 0;
 
 LidarDriver::LidarDriver()
-  : nh_private_("~")
+  : Node("ltme_node")
   , hibernation_requested_(false)
   , quit_driver_(false)
 {
-  if (!nh_private_.getParam("device_model", device_model_)) {
-    ROS_ERROR("Missing required parameter \"device_model\"");
+  declare_parameter("device_model", std::string());
+  declare_parameter("device_address", std::string());
+  declare_parameter("enforced_transport_mode", DEFAULT_ENFORCED_TRANSPORT_MODE);
+  declare_parameter("frame_id", DEFAULT_FRAME_ID);
+  declare_parameter("invert_frame", DEFAULT_INVERT_FRAME);
+  declare_parameter("scan_frequency_override", 0);
+  declare_parameter("angle_min", ANGLE_MIN_LIMIT);
+  declare_parameter("angle_max", ANGLE_MAX_LIMIT);
+  declare_parameter("angle_excluded_min", DEFAULT_ANGLE_EXCLUDED_MIN);
+  declare_parameter("angle_excluded_max", DEFAULT_ANGLE_EXCLUDED_MAX);
+  declare_parameter("range_min", RANGE_MIN_LIMIT);
+  declare_parameter("range_max", RANGE_MAX_LIMIT_NO_INIT);
+  declare_parameter("average_factor", DEFAULT_AVERAGE_FACTOR);
+  declare_parameter("shadow_filter_strength", DEFAULT_SHADOW_FILTER_STRENGTH);
+  declare_parameter("receiver_sensitivity_boost", DEFAULT_RECEIVER_SENSITIVITY_BOOST);
+}
+
+void LidarDriver::getParameters() 
+{
+  device_model_ = get_parameter("device_model").as_string();
+  if (device_model_.empty()) {
+    RCLCPP_ERROR(get_logger(), "Missing required parameter \"device_model\"");
     exit(-1);
   }
   else if (device_model_ != "LTME-02A" &&
       device_model_ != "LT-R1" && device_model_ != "LT-R2" &&
       device_model_ != "LT-I1" && device_model_ != "LT-I2") {
-    ROS_ERROR("Unsupported device model %s", device_model_.c_str());
+    RCLCPP_ERROR(get_logger(), "Unsupported device model %s", device_model_.c_str());
     exit(-1);
   }
-  if (!nh_private_.getParam("device_address", device_address_)) {
-    ROS_ERROR("Missing required parameter \"device_address\"");
+
+  if (get_parameter("range_max").as_double() == RANGE_MAX_LIMIT_NO_INIT) {  // no user parameter
+    if (device_model_ == "LTME-02A") {
+      range_max_ = RANGE_MAX_LIMIT_02A;
+    } else if (device_model_ == "LT-R1") {
+      range_max_ = RANGE_MAX_LIMIT_R1;
+    } else if (device_model_ == "LT-R2") {
+      range_max_ = RANGE_MAX_LIMIT_R2;
+    } else if (device_model_ == "LT-I1") {
+      range_max_ = RANGE_MAX_LIMIT_I1;
+    } else if (device_model_ == "LT-I2") {
+      range_max_ = RANGE_MAX_LIMIT_I2;
+    }
+    RCLCPP_INFO(get_logger(), "No range_max set, setting to %f", range_max_);
+    set_parameter(rclcpp::Parameter("range_max", range_max_));
+  }
+
+  device_address_ = get_parameter("device_address").as_string();
+  if (device_address_.empty()) {
+    RCLCPP_ERROR(get_logger(), "Missing required parameter \"device_address\"");
     exit(-1);
   }
-  nh_private_.param<std::string>("enforced_transport_mode", enforced_transport_mode_, DEFAULT_ENFORCED_TRANSPORT_MODE);
-  nh_private_.param<std::string>("frame_id", frame_id_, DEFAULT_FRAME_ID);
-  nh_private_.param<bool>("invert_frame", invert_frame_, DEFAULT_INVERT_FRAME);
-  nh_private_.param<int>("scan_frequency_override", scan_frequency_override_, 0);
-  nh_private_.param<double>("angle_min", angle_min_, ANGLE_MIN_LIMIT);
-  nh_private_.param<double>("angle_max", angle_max_, ANGLE_MAX_LIMIT);
-  nh_private_.param<double>("angle_excluded_min", angle_excluded_min_, DEFAULT_ANGLE_EXCLUDED_MIN);
-  nh_private_.param<double>("angle_excluded_max", angle_excluded_max_, DEFAULT_ANGLE_EXCLUDED_MAX);
-  nh_private_.param<double>("range_min", range_min_, RANGE_MIN_LIMIT);
-  if (device_model_ == "LTME-02A")
-    nh_private_.param<double>("range_max", range_max_, RANGE_MAX_LIMIT_02A);
-  else if (device_model_ == "LT-R1")
-    nh_private_.param<double>("range_max", range_max_, RANGE_MAX_LIMIT_R1);
-  else if (device_model_ == "LT-R2")
-    nh_private_.param<double>("range_max", range_max_, RANGE_MAX_LIMIT_R2);
-  else if (device_model_ == "LT-I1")
-    nh_private_.param<double>("range_max", range_max_, RANGE_MAX_LIMIT_I1);
-  else if (device_model_ == "LT-I2")
-    nh_private_.param<double>("range_max", range_max_, RANGE_MAX_LIMIT_I2);
-  nh_private_.param<int>("average_factor", average_factor_, DEFAULT_AVERAGE_FACTOR);
-  nh_private_.param<int>("shadow_filter_strength", shadow_filter_strength_, DEFAULT_SHADOW_FILTER_STRENGTH);
-  nh_private_.param<int>("receiver_sensitivity_boost", receiver_sensitivity_boost_, DEFAULT_RECEIVER_SENSITIVITY_BOOST);
+
+  enforced_transport_mode_ = get_parameter("enforced_transport_mode").as_string();
+  frame_id_ = get_parameter("frame_id").as_string();
+  invert_frame_ = get_parameter("invert_frame").as_bool();
+  scan_frequency_override_ = get_parameter("scan_frequency_override").as_int();
+  angle_min_ = get_parameter("angle_min").as_double();
+  angle_max_ = get_parameter("angle_max").as_double();
+  angle_excluded_min_ = get_parameter("angle_excluded_min").as_double();
+  angle_excluded_max_ = get_parameter("angle_excluded_max").as_double();
+  range_min_ = get_parameter("range_min").as_double();
+  range_max_ = get_parameter("range_max").as_double();
+  average_factor_ = get_parameter("average_factor").as_int();
+  shadow_filter_strength_ = get_parameter("shadow_filter_strength").as_int();
+  receiver_sensitivity_boost_ = get_parameter("receiver_sensitivity_boost").as_int();
 
   if (!(enforced_transport_mode_ == "none" || enforced_transport_mode_ == "normal" || enforced_transport_mode_ == "oob")) {
-    ROS_ERROR("Transport mode \"%s\" not supported", enforced_transport_mode_.c_str());
+    RCLCPP_ERROR(get_logger(), "Transport mode \"%s\" not supported", enforced_transport_mode_.c_str());
     exit(-1);
   }
   if (scan_frequency_override_ != 0 &&
     (scan_frequency_override_ < 10 || scan_frequency_override_ > 30 || scan_frequency_override_ % 5 != 0)) {
-    ROS_ERROR("Scan frequency %d not supported", scan_frequency_override_);
+    RCLCPP_ERROR(get_logger(), "Scan frequency %d not supported", scan_frequency_override_);
     exit(-1);
   }
   if (!(angle_min_ < angle_max_)) {
-    ROS_ERROR("angle_min (%f) can't be larger than or equal to angle_max (%f)", angle_min_, angle_max_);
+    RCLCPP_ERROR(get_logger(), "angle_min (%f) can't be larger than or equal to angle_max (%f)", angle_min_, angle_max_);
     exit(-1);
   }
   if (angle_min_ < ANGLE_MIN_LIMIT) {
-    ROS_ERROR("angle_min is set to %f while its minimum allowed value is %f", angle_min_, ANGLE_MIN_LIMIT);
+    RCLCPP_ERROR(get_logger(), "angle_min is set to %f while its minimum allowed value is %f", angle_min_, ANGLE_MIN_LIMIT);
     exit(-1);
   }
   if (angle_max_ > ANGLE_MAX_LIMIT) {
-    ROS_ERROR("angle_max is set to %f while its maximum allowed value is %f", angle_max_, ANGLE_MAX_LIMIT);
+    RCLCPP_ERROR(get_logger(), "angle_max is set to %f while its maximum allowed value is %f", angle_max_, ANGLE_MAX_LIMIT);
     exit(-1);
   }
   if (!(range_min_ < range_max_)) {
-    ROS_ERROR("range_min (%f) can't be larger than or equal to range_max (%f)", range_min_, range_max_);
+    RCLCPP_ERROR(get_logger(), "range_min (%f) can't be larger than or equal to range_max (%f)", range_min_, range_max_);
     exit(-1);
   }
   if (range_min_ < RANGE_MIN_LIMIT) {
-    ROS_ERROR("range_min is set to %f while its minimum allowed value is %f", range_min_, RANGE_MIN_LIMIT);
+    RCLCPP_ERROR(get_logger(), "range_min is set to %f while its minimum allowed value is %f", range_min_, RANGE_MIN_LIMIT);
     exit(-1);
   }
   if (average_factor_ <= 0 || average_factor_ > 8) {
-    ROS_ERROR("average_factor is set to %d while its valid value is between 1 and 8", average_factor_);
+    RCLCPP_ERROR(get_logger(), "average_factor is set to %d while its valid value is between 1 and 8", average_factor_);
     exit(-1);
   }
   if (shadow_filter_strength_ < 0 || average_factor_ > 100) {
-    ROS_ERROR("shadow_filter_strength is set to %d while its valid value is between 0 and 100 (inclusive)", shadow_filter_strength_);
+    RCLCPP_ERROR(get_logger(), "shadow_filter_strength is set to %d while its valid value is between 0 and 100 (inclusive)", shadow_filter_strength_);
     exit(-1);
   }
   if (receiver_sensitivity_boost_ < -20 || receiver_sensitivity_boost_ > 10) {
-    ROS_ERROR("receiver_sensitivity_boost is set to %d while the valid range is between -20 and 10 (inclusive)", receiver_sensitivity_boost_);
+    RCLCPP_ERROR(get_logger(), "receiver_sensitivity_boost is set to %d while the valid range is between -20 and 10 (inclusive)", receiver_sensitivity_boost_);
     exit(-1);
   }
 }
@@ -110,24 +139,22 @@ LidarDriver::LidarDriver()
 void LidarDriver::run()
 {
   std::unique_lock<std::mutex> lock(mutex_);
+  getParameters();
+  laser_scan_publisher_ = this->create_publisher<sensor_msgs::msg::LaserScan>("scan", 16);
 
-  ros::Publisher laser_scan_publisher = nh_.advertise<sensor_msgs::LaserScan>("scan", 16);
-  ros::ServiceServer query_serial_service = nh_private_.advertiseService<ltme_node::QuerySerialRequest, ltme_node::QuerySerialResponse>
-    ("query_serial", std::bind(&LidarDriver::querySerialService, this, std::placeholders::_1, std::placeholders::_2));
-  ros::ServiceServer query_firmware_service = nh_private_.advertiseService<ltme_node::QueryFirmwareVersionRequest, ltme_node::QueryFirmwareVersionResponse>
-    ("query_firmware_version", std::bind(&LidarDriver::queryFirmwareVersion, this, std::placeholders::_1, std::placeholders::_2));
-  ros::ServiceServer query_hardware_service = nh_private_.advertiseService<ltme_node::QueryHardwareVersionRequest, ltme_node::QueryHardwareVersionResponse>
-    ("query_hardware_version", std::bind(&LidarDriver::queryHardwareVersion, this, std::placeholders::_1, std::placeholders::_2));
-  ros::ServiceServer request_hibernation_service = nh_private_.advertiseService<std_srvs::EmptyRequest, std_srvs::EmptyResponse>
-    ("request_hibernation", std::bind(&LidarDriver::requestHibernationService, this, std::placeholders::_1, std::placeholders::_2));
-  ros::ServiceServer request_wake_up_service = nh_private_.advertiseService<std_srvs::EmptyRequest, std_srvs::EmptyResponse>
-    ("request_wake_up", std::bind(&LidarDriver::requestWakeUpService, this, std::placeholders::_1, std::placeholders::_2));
-  ros::ServiceServer quit_driver_service = nh_private_.advertiseService<std_srvs::EmptyRequest, std_srvs::EmptyResponse>
-    ("quit_driver", std::bind(&LidarDriver::quitDriverService, this, std::placeholders::_1, std::placeholders::_2));
-
-  ros::AsyncSpinner spinner(1);
-  spinner.start();
-
+  query_serial_service_ = this->create_service<ltme_interfaces::srv::QuerySerial>(
+    "query_serial", std::bind(&LidarDriver::querySerialService, this, std::placeholders::_1, std::placeholders::_2));
+  query_firmware_version_service_ = this->create_service<ltme_interfaces::srv::QueryFirmwareVersion>(
+    "query_firmware_version", std::bind(&LidarDriver::queryFirmwareVersion, this, std::placeholders::_1, std::placeholders::_2));
+  query_hardware_version_service_ = this->create_service<ltme_interfaces::srv::QueryHardwareVersion>(
+    "query_hardware_version", std::bind(&LidarDriver::queryHardwareVersion, this, std::placeholders::_1, std::placeholders::_2));
+  request_hibernation_service_ = this->create_service<std_srvs::srv::Trigger>(
+    "request_hibernation", std::bind(&LidarDriver::requestHibernationService, this, std::placeholders::_1, std::placeholders::_2));
+  request_wakeup_service_ = this->create_service<std_srvs::srv::Trigger>(
+    "request_wake_up", std::bind(&LidarDriver::requestWakeUpService, this, std::placeholders::_1, std::placeholders::_2));
+  quit_driver_service_ = this->create_service<std_srvs::srv::Empty>(
+    "quit_driver", std::bind(&LidarDriver::quitDriverService, this, std::placeholders::_1, std::placeholders::_2));
+  
   std::string address_str = device_address_;
   std::string port_str = "2105";
 
@@ -146,47 +173,49 @@ void LidarDriver::run()
     port = htons(std::stoi(port_str));
   }
   catch (...) {
-    ROS_ERROR("Invalid device address: %s", device_address_.c_str());
+    RCLCPP_ERROR(get_logger(), "Invalid device address: %s", device_address_.c_str());
     exit(-1);
   }
 
   ldcp_sdk::NetworkLocation location(address, port);
   device_ = std::unique_ptr<ldcp_sdk::Device>(new ldcp_sdk::Device(location));
 
-  ros::Rate loop_rate(0.3);
-  while (nh_.ok() && !quit_driver_.load()) {
+  rclcpp::Rate loop_rate(0.3);
+  while (rclcpp::ok() && !quit_driver_.load()) {
+    rclcpp::spin_some(shared_from_this());
     if (device_->open() == ldcp_sdk::no_error) {
       hibernation_requested_ = false;
 
       lock.unlock();
 
-      ROS_INFO("Device opened");
+      RCLCPP_INFO(get_logger(), "Device opened");
 
       bool reboot_required = false;
       if (device_model_ == "LTME-02A" && enforced_transport_mode_ != "none") {
         std::string firmware_version;
         if (device_->queryFirmwareVersion(firmware_version) == ldcp_sdk::no_error) {
+          RCLCPP_INFO(get_logger(), "Detected firmware version: %s", firmware_version.c_str());
           if (firmware_version < "0201")
-            ROS_WARN("Firmware version %s supports normal transport mode only, "
+            RCLCPP_WARN(get_logger(), "Firmware version %s supports normal transport mode only, "
               "\"enforced_transport_mode\" parameter will be ignored", firmware_version.c_str());
           else {
             bool oob_enabled = false;
             if (device_->isOobEnabled(oob_enabled) == ldcp_sdk::no_error) {
               if ((enforced_transport_mode_ == "normal" && oob_enabled) ||
                   (enforced_transport_mode_ == "oob" && !oob_enabled)) {
-                ROS_INFO("Transport mode will be switched to \"%s\"", oob_enabled ? "normal" : "oob");
+                RCLCPP_INFO(get_logger(), "Transport mode will be switched to \"%s\"", oob_enabled ? "normal" : "oob");
                 device_->setOobEnabled(!oob_enabled);
                 device_->persistSettings();
                 reboot_required = true;
               }
             }
             else
-              ROS_WARN("Unable to query device for its current transport mode, "
+              RCLCPP_WARN(get_logger(), "Unable to query device for its current transport mode, "
                 "\"enforced_transport_mode\" parameter will be ignored");
           }
         }
         else
-          ROS_WARN("Unable to query device for firmware version, \"enforced_transport_mode\" parameter will be ignored");
+          RCLCPP_WARN(get_logger(), "Unable to query device for firmware version, \"enforced_transport_mode\" parameter will be ignored");
       }
 
       if (!reboot_required) {
@@ -195,22 +224,22 @@ void LidarDriver::run()
           scan_frequency = scan_frequency_override_;
         else {
           if (device_->getScanFrequency(scan_frequency) != ldcp_sdk::no_error)
-            ROS_WARN("Unable to query device for scan frequency and will use %d as the frequency value", scan_frequency);
+            RCLCPP_WARN(get_logger(), "Unable to query device for scan frequency and will use %d as the frequency value", scan_frequency);
         }
 
         if (shadow_filter_strength_ != DEFAULT_SHADOW_FILTER_STRENGTH) {
           if (device_->setShadowFilterStrength(shadow_filter_strength_) == ldcp_sdk::no_error)
-            ROS_INFO("Shadow filter strength set to %d", shadow_filter_strength_);
+            RCLCPP_INFO(get_logger(), "Shadow filter strength set to %d", shadow_filter_strength_);
           else
-            ROS_WARN("Unable to set shadow filter strength");
+            RCLCPP_WARN(get_logger(), "Unable to set shadow filter strength");
         }
 
         if (receiver_sensitivity_boost_ != DEFAULT_RECEIVER_SENSITIVITY_BOOST) {
           if (device_->setReceiverSensitivityBoost(receiver_sensitivity_boost_) == ldcp_sdk::no_error) {
-            ROS_INFO("Receiver sensitivity boost %d applied", receiver_sensitivity_boost_);
+            RCLCPP_INFO(get_logger(), "Receiver sensitivity boost %d applied", receiver_sensitivity_boost_);
             int current_receiver_sensitivity = 0;
             if (device_->getReceiverSensitivityValue(current_receiver_sensitivity) == ldcp_sdk::no_error)
-              ROS_INFO("Current receiver sensitivity: %d", current_receiver_sensitivity);
+              RCLCPP_INFO(get_logger(), "Current receiver sensitivity: %d", current_receiver_sensitivity);
           }
         }
 
@@ -226,12 +255,13 @@ void LidarDriver::run()
 
         bool device_ready = false;
         for (int i = 0; i < 5 && !device_ready; i++) {
+          rclcpp::spin_some(shared_from_this());
           try {
             readScanBlock(scan_block);
             device_ready = true;
           }
           catch (...) {
-            ROS_INFO("Waiting for device to become ready...");
+            RCLCPP_INFO(get_logger(), "Waiting for device to become ready...");
           }
         }
 
@@ -247,7 +277,7 @@ void LidarDriver::run()
               fov_angle_max = M_PI;
               break;
             default:
-              ROS_ERROR("Unsupported FoV flag %d", scan_block.angular_fov);
+              RCLCPP_ERROR(get_logger(), "Unsupported FoV flag %d", scan_block.angular_fov);
               exit(-1);
           }
           angle_min_ = (angle_min_ > fov_angle_min) ? angle_min_ : fov_angle_min;
@@ -260,7 +290,7 @@ void LidarDriver::run()
           int beam_index_excluded_min = std::ceil(angle_excluded_min_ * beam_count / (2 * M_PI));
           int beam_index_excluded_max = std::floor(angle_excluded_max_ * beam_count / (2 * M_PI));
 
-          sensor_msgs::LaserScan laser_scan;
+          sensor_msgs::msg::LaserScan laser_scan;
           laser_scan.header.frame_id = frame_id_;
           laser_scan.angle_min = (!invert_frame_) ? angle_min_ : angle_max_;
           laser_scan.angle_max = (!invert_frame_) ? angle_max_ : angle_min_;
@@ -290,7 +320,9 @@ void LidarDriver::run()
             }
           };
 
-          while (nh_.ok() && !quit_driver_.load()) {
+          while (rclcpp::ok() && !quit_driver_.load()) {
+            rclcpp::spin_some(shared_from_this());
+
             laser_scan.ranges.resize(beam_index_max - beam_index_min + 1);
             laser_scan.intensities.resize(beam_index_max - beam_index_min + 1);
 
@@ -302,7 +334,7 @@ void LidarDriver::run()
                 readScanBlock(scan_block);
               } while (scan_block.block_index != 0);
 
-              laser_scan.header.stamp = ros::Time::now();
+              laser_scan.header.stamp = get_clock()->now();
 
               while (scan_block.block_index != scan_block.block_count - 1) {
                 updateLaserScan(scan_block);
@@ -338,26 +370,26 @@ void LidarDriver::run()
                 laser_scan.intensities.resize(final_size);
               }
 
-              laser_scan_publisher.publish(laser_scan);
+              laser_scan_publisher_->publish(laser_scan);
 
               if (hibernation_requested_.load()) {
                 device_->stopMeasurement();
-                ROS_INFO("Device brought into hibernation");
-                ros::Rate loop_rate(10);
+                RCLCPP_INFO(get_logger(), "Device brought into hibernation");
+                rclcpp::Rate loop_rate(10);
                 while (hibernation_requested_.load())
                   loop_rate.sleep();
                 device_->startMeasurement();
-                ROS_INFO("Woken up from hibernation");
+                RCLCPP_INFO(get_logger(), "Woken up from hibernation");
               }
             }
             catch (const std::exception&) {
-              ROS_WARN("Error reading data from device");
+              RCLCPP_WARN(get_logger(), "Error reading data from device");
               break;
             }
           }
         }
         else
-          ROS_INFO("Device is not ready. Will close connection and retry");
+          RCLCPP_INFO(get_logger(), "Device is not ready. Will close connection and retry");
 
         device_->stopStreaming();
       }
@@ -368,94 +400,105 @@ void LidarDriver::run()
       device_->close();
 
       if (!reboot_required)
-        ROS_INFO("Device closed");
+        RCLCPP_INFO(get_logger(), "Device closed");
       else
-        ROS_INFO("Device rebooted");
+        RCLCPP_INFO(get_logger(), "Device rebooted");
     }
     else {
-      ROS_INFO_THROTTLE(5, "Waiting for device... [%s]", device_address_.c_str());
+      auto& clk = *this->get_clock();
+      RCLCPP_INFO_THROTTLE(get_logger(), clk, 5000, "Waiting for device... [%s]", device_address_.c_str());
       loop_rate.sleep();
     }
   }
 }
 
-bool LidarDriver::querySerialService(ltme_node::QuerySerialRequest& request,
-                                     ltme_node::QuerySerialResponse& response)
+void LidarDriver::querySerialService(const ltme_interfaces::srv::QuerySerial::Request::SharedPtr request,
+    const ltme_interfaces::srv::QuerySerial::Response::SharedPtr response)
 {
+  std::string serial {};
+  bool success = false;
+
   std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
-  if (lock.owns_lock()) {
-    std::string serial;
-    if (device_->querySerial(serial) == ldcp_sdk::no_error) {
-      response.serial = serial;
-      return true;
-    }
+  if (lock.owns_lock() && device_->querySerial(serial) == ldcp_sdk::no_error) {
+    success = true;
   }
-  return false;
+  response->success = success;
+  response->serial = serial;
 }
 
-bool LidarDriver::queryFirmwareVersion(ltme_node::QueryFirmwareVersionRequest& request,
-                                       ltme_node::QueryFirmwareVersionResponse& response)
+void LidarDriver::queryFirmwareVersion(const ltme_interfaces::srv::QueryFirmwareVersion::Request::SharedPtr request,
+    const ltme_interfaces::srv::QueryFirmwareVersion::Response::SharedPtr response)
 {
+  std::string firmware_version {};
+  bool success = false;
+
   std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
-  if (lock.owns_lock()) {
-    std::string firmware_version;
-    if (device_->queryFirmwareVersion(firmware_version) == ldcp_sdk::no_error) {
-      response.firmware_version = firmware_version;
-      return true;
-    }
+  if (lock.owns_lock() && device_->queryFirmwareVersion(firmware_version) == ldcp_sdk::no_error) {
+    success = true;
   }
-  return false;
+  response->success = success;
+  response->firmware_version = firmware_version;
 }
 
-bool LidarDriver::queryHardwareVersion(ltme_node::QueryHardwareVersionRequest& request, ltme_node::QueryHardwareVersionResponse& response)
+void LidarDriver::queryHardwareVersion(const ltme_interfaces::srv::QueryHardwareVersion::Request::SharedPtr request,
+    const ltme_interfaces::srv::QueryHardwareVersion::Response::SharedPtr response)
 {
+  std::string hardware_version {};
+  bool success = false;
+
   std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
-  if (lock.owns_lock()) {
-    std::string hardware_version;
-    if (device_->queryHardwareVersion(hardware_version) == ldcp_sdk::no_error) {
-      response.hardware_version = hardware_version;
-      return true;
-    }
+  if (lock.owns_lock() && device_->queryHardwareVersion(hardware_version) == ldcp_sdk::no_error) {
+    success = true;
   }
-  return false;
+  response->success = success;
+  response->hardware_version = hardware_version;
 }
 
-bool LidarDriver::requestHibernationService(std_srvs::EmptyRequest& request,
-                                            std_srvs::EmptyResponse& response)
+void LidarDriver::requestHibernationService(const std_srvs::srv::Trigger::Request::SharedPtr request,
+    const std_srvs::srv::Trigger::Response::SharedPtr response)
 {
+  std::string error_message {};
+  bool success = false;
+
   std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
   if (lock.owns_lock()) {
     hibernation_requested_ = true;
-    return true;
+    success = true;
+  } else {
+    error_message = "Could not obtain lock";
   }
-  return false;
+  response->success = success;
+  response->message = error_message;
 }
 
-bool LidarDriver::requestWakeUpService(std_srvs::EmptyRequest& request,
-                                       std_srvs::EmptyResponse& response)
+void LidarDriver::requestWakeUpService(const std_srvs::srv::Trigger::Request::SharedPtr request,
+    const std_srvs::srv::Trigger::Response::SharedPtr response)
 {
+  std::string error_messsage {};
+  bool success = false;
+
   std::unique_lock<std::mutex> lock(mutex_, std::try_to_lock);
   if (lock.owns_lock()) {
     hibernation_requested_ = false;
-    return true;
+    success = true;
+  } else {
+    error_messsage = "Could not obtain lock";
   }
-  return false;
+  response->success = success;
+  response->message = error_messsage;
 }
 
-bool LidarDriver::quitDriverService(std_srvs::EmptyRequest& request,
-                                    std_srvs::EmptyResponse& response)
+void LidarDriver::quitDriverService(const std_srvs::srv::Empty::Request::SharedPtr request,
+    const std_srvs::srv::Empty::Response::SharedPtr response)
 {
   quit_driver_ = true;
-  return true;
 }
 
-int main(int argc, char* argv[])
+int main(int argc, char** argv)
 {
-  ros::init(argc, argv, "ltme_node");
-  ROS_INFO("ltme_node started");
-
-  LidarDriver lidarDriver;
-  lidarDriver.run();
-
+  rclcpp::init(argc, argv);
+  auto node = std::make_shared<LidarDriver>();
+  node->run();
+  rclcpp::shutdown();
   return 0;
 }

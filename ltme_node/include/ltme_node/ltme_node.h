@@ -1,19 +1,21 @@
 #ifndef LTME_NODE_H
 #define LTME_NODE_H
 
-#include "ltme_node/QuerySerial.h"
-#include "ltme_node/QueryFirmwareVersion.h"
-#include "ltme_node/QueryHardwareVersion.h"
+#include "ltme_interfaces/srv/query_serial.hpp"
+#include "ltme_interfaces/srv/query_firmware_version.hpp"
+#include "ltme_interfaces/srv/query_hardware_version.hpp"
 
-#include <ros/ros.h>
-#include <std_srvs/Empty.h>
+#include "rclcpp/rclcpp.hpp"
+#include "std_srvs/srv/trigger.hpp"
+#include "std_srvs/srv/empty.hpp"
+#include "sensor_msgs/msg/laser_scan.hpp"
 
 #include "ldcp/device.h"
 
 #include <mutex>
 #include <atomic>
 
-class LidarDriver
+class LidarDriver : public rclcpp::Node
 {
 public:
   const static std::string DEFAULT_ENFORCED_TRANSPORT_MODE;
@@ -25,6 +27,7 @@ public:
   const static double DEFAULT_ANGLE_EXCLUDED_MIN;
   const static double DEFAULT_ANGLE_EXCLUDED_MAX;
   const static double RANGE_MIN_LIMIT;
+  const static double RANGE_MAX_LIMIT_NO_INIT;
   const static double RANGE_MAX_LIMIT_02A;
   const static double RANGE_MAX_LIMIT_R1;
   const static double RANGE_MAX_LIMIT_R2;
@@ -39,21 +42,30 @@ public:
   void run();
 
 private:
-  bool querySerialService(ltme_node::QuerySerialRequest& request,
-                          ltme_node::QuerySerialResponse& response);
-  bool queryFirmwareVersion(ltme_node::QueryFirmwareVersionRequest& request,
-                            ltme_node::QueryFirmwareVersionResponse& response);
-  bool queryHardwareVersion(ltme_node::QueryHardwareVersionRequest& request,
-                            ltme_node::QueryHardwareVersionResponse& response);
-  bool requestHibernationService(std_srvs::EmptyRequest& request,
-                                 std_srvs::EmptyResponse& response);
-  bool requestWakeUpService(std_srvs::EmptyRequest& request,
-                            std_srvs::EmptyResponse& response);
-  bool quitDriverService(std_srvs::EmptyRequest& request,
-                         std_srvs::EmptyResponse& response);
+  void getParameters();
+  // Publishers
+  rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr laser_scan_publisher_;
 
-private:
-  ros::NodeHandle nh_, nh_private_;
+  // Services
+  void querySerialService(const ltme_interfaces::srv::QuerySerial::Request::SharedPtr request,
+    const ltme_interfaces::srv::QuerySerial::Response::SharedPtr response);
+  void queryFirmwareVersion(const ltme_interfaces::srv::QueryFirmwareVersion::Request::SharedPtr request,
+    const ltme_interfaces::srv::QueryFirmwareVersion::Response::SharedPtr response);
+  void queryHardwareVersion(const ltme_interfaces::srv::QueryHardwareVersion::Request::SharedPtr request,
+    const ltme_interfaces::srv::QueryHardwareVersion::Response::SharedPtr response);
+  void requestHibernationService(const std_srvs::srv::Trigger::Request::SharedPtr request,
+    const std_srvs::srv::Trigger::Response::SharedPtr response);
+  void requestWakeUpService(const std_srvs::srv::Trigger::Request::SharedPtr request,
+    const std_srvs::srv::Trigger::Response::SharedPtr response);
+  void quitDriverService(const std_srvs::srv::Empty::Request::SharedPtr request,
+    const std_srvs::srv::Empty::Response::SharedPtr response);
+
+  rclcpp::Service<ltme_interfaces::srv::QuerySerial>::SharedPtr query_serial_service_;
+  rclcpp::Service<ltme_interfaces::srv::QueryFirmwareVersion>::SharedPtr query_firmware_version_service_;
+  rclcpp::Service<ltme_interfaces::srv::QueryHardwareVersion>::SharedPtr query_hardware_version_service_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr request_hibernation_service_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr request_wakeup_service_;
+  rclcpp::Service<std_srvs::srv::Empty>::SharedPtr quit_driver_service_;
 
   std::string device_model_;
   std::string device_address_;
