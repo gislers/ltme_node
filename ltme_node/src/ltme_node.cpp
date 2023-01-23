@@ -412,7 +412,7 @@ void LidarDriver::run()
   }
 }
 
-void LidarDriver::querySerialService(const ltme_interfaces::srv::QuerySerial::Request::SharedPtr request,
+void LidarDriver::querySerialService(const ltme_interfaces::srv::QuerySerial::Request::SharedPtr /*request*/,
     const ltme_interfaces::srv::QuerySerial::Response::SharedPtr response)
 {
   std::string serial {};
@@ -426,7 +426,7 @@ void LidarDriver::querySerialService(const ltme_interfaces::srv::QuerySerial::Re
   response->serial = serial;
 }
 
-void LidarDriver::queryFirmwareVersion(const ltme_interfaces::srv::QueryFirmwareVersion::Request::SharedPtr request,
+void LidarDriver::queryFirmwareVersion(const ltme_interfaces::srv::QueryFirmwareVersion::Request::SharedPtr /*request*/,
     const ltme_interfaces::srv::QueryFirmwareVersion::Response::SharedPtr response)
 {
   std::string firmware_version {};
@@ -440,7 +440,7 @@ void LidarDriver::queryFirmwareVersion(const ltme_interfaces::srv::QueryFirmware
   response->firmware_version = firmware_version;
 }
 
-void LidarDriver::queryHardwareVersion(const ltme_interfaces::srv::QueryHardwareVersion::Request::SharedPtr request,
+void LidarDriver::queryHardwareVersion(const ltme_interfaces::srv::QueryHardwareVersion::Request::SharedPtr /*request*/,
     const ltme_interfaces::srv::QueryHardwareVersion::Response::SharedPtr response)
 {
   std::string hardware_version {};
@@ -454,7 +454,7 @@ void LidarDriver::queryHardwareVersion(const ltme_interfaces::srv::QueryHardware
   response->hardware_version = hardware_version;
 }
 
-void LidarDriver::requestHibernationService(const std_srvs::srv::Trigger::Request::SharedPtr request,
+void LidarDriver::requestHibernationService(const std_srvs::srv::Trigger::Request::SharedPtr /*request*/,
     const std_srvs::srv::Trigger::Response::SharedPtr response)
 {
   std::string error_message {};
@@ -471,7 +471,7 @@ void LidarDriver::requestHibernationService(const std_srvs::srv::Trigger::Reques
   response->message = error_message;
 }
 
-void LidarDriver::requestWakeUpService(const std_srvs::srv::Trigger::Request::SharedPtr request,
+void LidarDriver::requestWakeUpService(const std_srvs::srv::Trigger::Request::SharedPtr /*request*/,
     const std_srvs::srv::Trigger::Response::SharedPtr response)
 {
   std::string error_messsage {};
@@ -488,8 +488,8 @@ void LidarDriver::requestWakeUpService(const std_srvs::srv::Trigger::Request::Sh
   response->message = error_messsage;
 }
 
-void LidarDriver::quitDriverService(const std_srvs::srv::Empty::Request::SharedPtr request,
-    const std_srvs::srv::Empty::Response::SharedPtr response)
+void LidarDriver::quitDriverService(const std_srvs::srv::Empty::Request::SharedPtr /*request*/,
+    const std_srvs::srv::Empty::Response::SharedPtr /*response*/)
 {
   quit_driver_ = true;
 }
