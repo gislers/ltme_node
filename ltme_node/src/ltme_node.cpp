@@ -377,6 +377,7 @@ void LidarDriver::run()
                 RCLCPP_INFO(get_logger(), "Device brought into hibernation");
                 rclcpp::Rate loop_rate(10);
                 while (hibernation_requested_.load())
+                  rclcpp::spin_some(shared_from_this());
                   loop_rate.sleep();
                 device_->startMeasurement();
                 RCLCPP_INFO(get_logger(), "Woken up from hibernation");
