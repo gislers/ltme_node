@@ -46,11 +46,11 @@ private:
   ldcp_sdk::NetworkLocation parseDeviceAddress() const;
   void setupTransportMode();  // setup transport mode for LTME-02A model
   void writeParametersToDevice(); 
-  void waitForDeviceToBecomeReady();
+  void waitForDeviceToBecomeReady(ldcp_sdk::ScanBlock &scan_block);
   void readScanBlock(ldcp_sdk::ScanBlock &scan_block);
   void averageLaserScan(sensor_msgs::msg::LaserScan &laser_scan) const;
   void performHibernation();
-  void prepareLaserScan(sensor_msgs::msg::LaserScan &laser_scan);
+  void prepareLaserScan(sensor_msgs::msg::LaserScan &laser_scan, const ldcp_sdk::ScanBlock &scan_block);
   void updateLaserScan(sensor_msgs::msg::LaserScan &laser_scan, const ldcp_sdk::ScanBlock &scan_block) const;
 
   // Publishers
@@ -88,12 +88,12 @@ private:
   int scan_frequency_override_;
   float angle_min_;
   float angle_max_;
-  std::size_t beam_index_min_;
-  std::size_t beam_index_max_;
+  int beam_index_min_;
+  int beam_index_max_;
   float angle_excluded_min_;
   float angle_excluded_max_;
-  std::size_t beam_index_excluded_min_;
-  std::size_t beam_index_excluded_max_;
+  int beam_index_excluded_min_;
+  int beam_index_excluded_max_;
   float range_min_;
   float range_max_;
   uint average_factor_;

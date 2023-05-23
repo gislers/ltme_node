@@ -181,12 +181,13 @@ void LidarDriver::run()
         writeParametersToDevice();
         device_->startMeasurement();
         device_->startStreaming();
-        waitForDeviceToBecomeReady();
+        
+        ldcp_sdk::ScanBlock scan_block;
+        waitForDeviceToBecomeReady(scan_block);
 
         if (device_ready_) {
           sensor_msgs::msg::LaserScan laser_scan;
-          prepareLaserScan(laser_scan);
-          ldcp_sdk::ScanBlock scan_block;
+          prepareLaserScan(laser_scan, scan_block);
 
           while (rclcpp::ok() && !quit_driver_.load()) {
             rclcpp::spin_some(shared_from_this());
@@ -275,6 +276,7 @@ ldcp_sdk::NetworkLocation LidarDriver::parseDeviceAddress() const
 
 void LidarDriver::setupTransportMode()
 {
+  reboot_required_ = false;
   if (device_model_ == "LTME-02A" && enforced_transport_mode_ != "none") {
     std::string firmware_version;
     if (device_->queryFirmwareVersion(firmware_version) == ldcp_sdk::no_error) {
@@ -329,9 +331,9 @@ void LidarDriver::writeParametersToDevice()
   }
 }
 
-void LidarDriver::waitForDeviceToBecomeReady()
+void LidarDriver::waitForDeviceToBecomeReady(ldcp_sdk::ScanBlock &scan_block)
 {
-  ldcp_sdk::ScanBlock scan_block;
+  device_ready_ = false;
   for (int i = 0; i < 5 && !device_ready_; i++) {
     rclcpp::spin_some(shared_from_this());
     try {
@@ -398,18 +400,10 @@ void LidarDriver::performHibernation()
   }
 }
 
-void LidarDriver::prepareLaserScan(sensor_msgs::msg::LaserScan &laser_scan)
+void LidarDriver::prepareLaserScan(sensor_msgs::msg::LaserScan &laser_scan, const ldcp_sdk::ScanBlock &scan_block)
 {
   float fov_angle_min = 0;
   float fov_angle_max = 0;
-  
-  ldcp_sdk::ScanBlock scan_block;
-  try {
-    readScanBlock(scan_block);
-  }
-  catch (const LtmeReadException& /*e*/) {
-    RCLCPP_WARN(get_logger(), "Error reading data from device");
-  }
 
   switch (scan_block.angular_fov) {
     case ldcp_sdk::ANGULAR_FOV_270DEG:
@@ -429,10 +423,10 @@ void LidarDriver::prepareLaserScan(sensor_msgs::msg::LaserScan &laser_scan)
 
   int beam_count = scan_block.block_count * scan_block.block_length * 360 /
     ((scan_block.angular_fov == ldcp_sdk::ANGULAR_FOV_270DEG) ? 270 : 360);
-  beam_index_min_ = static_cast<std::size_t>(std::ceil(angle_min_ * beam_count / (2 * M_PIf)));
-  beam_index_max_ = static_cast<std::size_t>(std::floor(angle_max_ * beam_count / (2 * M_PIf)));
-  beam_index_excluded_min_ = static_cast<std::size_t>(std::ceil(angle_excluded_min_ * beam_count / (2 * M_PIf)));
-  beam_index_excluded_max_ = static_cast<std::size_t>(std::floor(angle_excluded_max_ * beam_count / (2 * M_PIf)));
+  beam_index_min_ = std::ceil(angle_min_ * beam_count / (2 * M_PIf));
+  beam_index_max_ = std::floor(angle_max_ * beam_count / (2 * M_PIf));
+  beam_index_excluded_min_ = std::ceil(angle_excluded_min_ * beam_count / (2 * M_PIf));
+  beam_index_excluded_max_ = std::floor(angle_excluded_max_ * beam_count / (2 * M_PIf));
 
   laser_scan.header.frame_id = frame_id_;
   laser_scan.angle_min = (!invert_frame_) ? angle_min_ : angle_max_;
@@ -446,9 +440,9 @@ void LidarDriver::prepareLaserScan(sensor_msgs::msg::LaserScan &laser_scan)
 
 void LidarDriver::updateLaserScan(sensor_msgs::msg::LaserScan &laser_scan, const ldcp_sdk::ScanBlock &scan_block) const
 {
-  std::size_t block_size = scan_block.layers[0].ranges.size();
-  for (std::size_t i = 0; i < block_size; i++) {
-    std::size_t beam_index = (scan_block.block_index - scan_block.block_count / 2) * block_size + i;
+  int block_size = scan_block.layers[0].ranges.size();
+  for (int i = 0; i < block_size; i++) {
+    int beam_index = (scan_block.block_index - scan_block.block_count / 2) * block_size + i;
     if (beam_index < beam_index_min_ || beam_index > beam_index_max_)
       continue;
     if (beam_index >= beam_index_excluded_min_ && beam_index <= beam_index_excluded_max_)
