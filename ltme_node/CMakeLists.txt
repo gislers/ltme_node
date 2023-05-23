@@ -49,6 +49,9 @@ add_executable(ltme_node src/ltme_node.cpp)
 ament_target_dependencies(ltme_node rclcpp sensor_msgs std_msgs std_srvs ltme_interfaces)
 target_link_libraries(ltme_node ldcp_sdk)
 
+add_executable(update_ip_address src/update_ip_address.cpp)
+target_link_libraries(update_ip_address ldcp_sdk)
+
 if(OPENSSL_FOUND)
   add_executable(update_firmware
     "src/update_firmware.cpp"
@@ -66,7 +69,7 @@ endif()
 
 # install nodes
 install(TARGETS
-  ltme_node update_firmware
+  ltme_node update_firmware update_ip_address
   DESTINATION lib/${PROJECT_NAME}
 )
 
