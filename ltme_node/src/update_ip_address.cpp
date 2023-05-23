@@ -8,6 +8,14 @@ static const int FIRMWARE_BLOCK_SIZE = 512;
 static const in_port_t DEFAULT_PORT = 2105;
 ldcp_sdk::NetworkLocation parseDeviceAddress(const std::string &device_address);
 
+class LtmeIoException : public std::exception
+{ 
+public:
+  const char * what () const throw () override {
+    return "Failed to read or write data from LTME device";
+  }
+};
+
 int main(int argc, char* argv[])
 {
   if (argc != 3) {
@@ -26,7 +34,7 @@ int main(int argc, char* argv[])
     auto new_address = parseDeviceAddress(argv[2]);
     std::cout << "Connecting device at "
             << inet_ntoa({ current_address.address() }) << ":" << std::to_string(ntohs(current_address.port()))
-            << "..." << std::flush;
+            << "..." << std::endl;
 
     ldcp_sdk::Device device(current_address);
     if (device.open() != ldcp_sdk::no_error) {
@@ -38,17 +46,24 @@ int main(int argc, char* argv[])
     device.queryOperationMode(operation_mode);
     if (operation_mode == "normal") {
       std::cout << "Device is running in normal mode" << std::endl;
-      device.setNetworkAddress(new_address.address());
+      if (device.setNetworkAddress(new_address.address()) != ldcp_sdk::no_error) {
+        throw LtmeIoException();
+      }
+      if (device.persistSettings() != ldcp_sdk::no_error) {
+        throw LtmeIoException();
+      }
       std::cout << "done" << std::endl;
     }
     else {
       std::cout << "Device is not running in normal mode. Exiting..." << std::endl;
     }
+    device.reboot();
     device.close();
-    
   } catch(std::invalid_argument& e) {
     std::cerr << "Failed to parse device address: " << e.what() << std::endl;
     return -1;
+  } catch(const LtmeIoException& e) {
+    std::cerr << "Failed to set network address: " << e.what() << std::endl;
   }
   return 0;
 }
