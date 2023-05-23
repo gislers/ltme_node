@@ -18,6 +18,9 @@
 class LidarDriver : public rclcpp::Node
 {
 public:
+  LidarDriver();
+  void run();
+
   const static std::string DEFAULT_ENFORCED_TRANSPORT_MODE;
   const static std::string DEFAULT_FRAME_ID;
   const static bool DEFAULT_INVERT_FRAME;
@@ -37,12 +40,19 @@ public:
   const static int DEFAULT_SHADOW_FILTER_STRENGTH;
   const static int DEFAULT_RECEIVER_SENSITIVITY_BOOST;
 
-public:
-  LidarDriver();
-  void run();
-
 private:
   void getParameters();
+  void performParameterChecks() const;
+  ldcp_sdk::NetworkLocation parseDeviceAddress() const;
+  void setupTransportMode();  // setup transport mode for LTME-02A model
+  void writeParametersToDevice(); 
+  void waitForDeviceToBecomeReady();
+  void readScanBlock(ldcp_sdk::ScanBlock &scan_block);
+  void averageLaserScan(sensor_msgs::msg::LaserScan &laser_scan) const;
+  void performHibernation();
+  void prepareLaserScan(sensor_msgs::msg::LaserScan &laser_scan);
+  void updateLaserScan(sensor_msgs::msg::LaserScan &laser_scan, const ldcp_sdk::ScanBlock &scan_block) const;
+
   // Publishers
   rclcpp::Publisher<sensor_msgs::msg::LaserScan>::SharedPtr laser_scan_publisher_;
 
@@ -69,25 +79,34 @@ private:
 
   std::string device_model_;
   std::string device_address_;
+  in_addr_t address_;
+  in_port_t port_;
   std::string enforced_transport_mode_;
   std::string frame_id_;
   bool invert_frame_;
+  int scan_frequency_;
   int scan_frequency_override_;
-  double angle_min_;
-  double angle_max_;
-  double angle_excluded_min_;
-  double angle_excluded_max_;
-  double range_min_;
-  double range_max_;
-  int average_factor_;
+  float angle_min_;
+  float angle_max_;
+  std::size_t beam_index_min_;
+  std::size_t beam_index_max_;
+  float angle_excluded_min_;
+  float angle_excluded_max_;
+  std::size_t beam_index_excluded_min_;
+  std::size_t beam_index_excluded_max_;
+  float range_min_;
+  float range_max_;
+  uint average_factor_;
   int shadow_filter_strength_;
   int receiver_sensitivity_boost_;
 
   std::unique_ptr<ldcp_sdk::Device> device_;
   std::mutex mutex_;
 
-  std::atomic_bool hibernation_requested_;
-  std::atomic_bool quit_driver_;
+  std::atomic_bool hibernation_requested_ = false;
+  std::atomic_bool quit_driver_ = false;
+  bool reboot_required_ = false;
+  bool device_ready_ = false;
 };
 
 #endif
