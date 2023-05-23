@@ -48,6 +48,61 @@ LidarDriver::LidarDriver() : Node("ltme_node")
   declare_parameter("receiver_sensitivity_boost", DEFAULT_RECEIVER_SENSITIVITY_BOOST);
 }
 
+void LidarDriver::run()
+{
+  std::unique_lock lock(mutex_);
+  getParameters();
+  configureServices();
+  device_ = std::make_unique<ldcp_sdk::Device>(parseDeviceAddress());
+
+  rclcpp::Rate loop_rate(0.3);
+  while (rclcpp::ok() && !quit_driver_.load()) {
+    rclcpp::spin_some(shared_from_this());
+    if (device_->open() == ldcp_sdk::no_error) {
+      hibernation_requested_ = false;
+      lock.unlock();
+      RCLCPP_INFO(get_logger(), "Device opened");
+      setupTransportMode();  // writes reboot_required flag
+     
+      if (!reboot_required_) {
+        writeParametersToDevice();
+        device_->startMeasurement();
+        device_->startStreaming();
+        ldcp_sdk::ScanBlock scan_block;
+        waitForDeviceToBecomeReady(scan_block);
+
+        if (device_ready_) {
+          sensor_msgs::msg::LaserScan laser_scan;
+          prepareLaserScan(laser_scan, scan_block);
+          performLaserScan(laser_scan, scan_block);
+        }
+        else {
+          RCLCPP_INFO(get_logger(), "Device is not ready. Will close connection and retry");
+        }
+        device_->stopStreaming();
+      }
+      else {  // reboot is required
+        device_->reboot();
+      }
+
+      lock.lock();
+      device_->close();
+
+      if (!reboot_required_) {
+        RCLCPP_INFO(get_logger(), "Device closed");
+      }
+      else {
+        RCLCPP_INFO(get_logger(), "Device rebooted");
+      }
+    }
+    else {  // device could not be opened
+      auto& clk = *this->get_clock();
+      RCLCPP_INFO_THROTTLE(get_logger(), clk, 5000, "Waiting for device... [%s]", device_address_.c_str());
+      loop_rate.sleep();
+    }
+  }
+}
+
 void LidarDriver::getParameters() 
 {
   device_model_ = get_parameter("device_model").as_string();
@@ -145,10 +200,8 @@ void LidarDriver::performParameterChecks() const
   }
 }
 
-void LidarDriver::run()
+void LidarDriver::configureServices()
 {
-  std::unique_lock lock(mutex_);
-  getParameters();
   laser_scan_publisher_ = this->create_publisher<sensor_msgs::msg::LaserScan>("scan", 16);
 
   query_serial_service_ = this->create_service<ltme_interfaces::srv::QuerySerial>(
@@ -163,87 +216,38 @@ void LidarDriver::run()
     "request_wake_up", std::bind(&LidarDriver::requestWakeUpService, this, std::placeholders::_1, std::placeholders::_2));
   quit_driver_service_ = this->create_service<std_srvs::srv::Empty>(
     "quit_driver", std::bind(&LidarDriver::quitDriverService, this, std::placeholders::_1, std::placeholders::_2));
-  
-  device_ = std::make_unique<ldcp_sdk::Device>(parseDeviceAddress());
+}
 
-  rclcpp::Rate loop_rate(0.3);
+void LidarDriver::performLaserScan(sensor_msgs::msg::LaserScan &laser_scan, ldcp_sdk::ScanBlock &scan_block)
+{
   while (rclcpp::ok() && !quit_driver_.load()) {
     rclcpp::spin_some(shared_from_this());
-    if (device_->open() == ldcp_sdk::no_error) {
-      hibernation_requested_ = false;
 
-      lock.unlock();
+    laser_scan.ranges.resize(beam_index_max_ - beam_index_min_ + 1);
+    laser_scan.intensities.resize(beam_index_max_ - beam_index_min_ + 1);
 
-      RCLCPP_INFO(get_logger(), "Device opened");
-      setupTransportMode();
-     
-      if (!reboot_required_) {
-        writeParametersToDevice();
-        device_->startMeasurement();
-        device_->startStreaming();
-        
-        ldcp_sdk::ScanBlock scan_block;
-        waitForDeviceToBecomeReady(scan_block);
+    std::fill(laser_scan.ranges.begin(), laser_scan.ranges.end(), 0.0);
+    std::fill(laser_scan.intensities.begin(), laser_scan.intensities.end(), 0.0);
 
-        if (device_ready_) {
-          sensor_msgs::msg::LaserScan laser_scan;
-          prepareLaserScan(laser_scan, scan_block);
+    try {
+      do {
+        readScanBlock(scan_block);
+      } while (scan_block.block_index != 0);
 
-          while (rclcpp::ok() && !quit_driver_.load()) {
-            rclcpp::spin_some(shared_from_this());
+      laser_scan.header.stamp = get_clock()->now();
 
-            laser_scan.ranges.resize(beam_index_max_ - beam_index_min_ + 1);
-            laser_scan.intensities.resize(beam_index_max_ - beam_index_min_ + 1);
-
-            std::fill(laser_scan.ranges.begin(), laser_scan.ranges.end(), 0.0);
-            std::fill(laser_scan.intensities.begin(), laser_scan.intensities.end(), 0.0);
-
-            try {
-              do {
-                readScanBlock(scan_block);
-              } while (scan_block.block_index != 0);
-
-              laser_scan.header.stamp = get_clock()->now();
-
-              while (scan_block.block_index != scan_block.block_count - 1) {
-                updateLaserScan(laser_scan, scan_block);
-                readScanBlock(scan_block);
-              }
-              updateLaserScan(laser_scan, scan_block);
-              averageLaserScan(laser_scan);
-              laser_scan_publisher_->publish(laser_scan);
-              performHibernation();
-            }
-            catch (const LtmeReadException& /*e*/) {
-              RCLCPP_WARN(get_logger(), "Error reading data from device");
-              break;
-            }
-          }
-        }
-        else {
-          RCLCPP_INFO(get_logger(), "Device is not ready. Will close connection and retry");
-        }
-
-        device_->stopStreaming();
+      while (scan_block.block_index != scan_block.block_count - 1) {
+        updateLaserScan(laser_scan, scan_block);
+        readScanBlock(scan_block);
       }
-      else {
-        device_->reboot();
-      }
-
-      lock.lock();
-      device_->close();
-
-      if (!reboot_required_) {
-        RCLCPP_INFO(get_logger(), "Device closed");
-      }
-      else {
-        RCLCPP_INFO(get_logger(), "Device rebooted");
-      }
+      updateLaserScan(laser_scan, scan_block);
+      averageLaserScan(laser_scan);
+      laser_scan_publisher_->publish(laser_scan);
+      performHibernation();
     }
-    else {
-      auto& clk = *this->get_clock();
-      RCLCPP_INFO_THROTTLE(get_logger(), clk, 5000, "Waiting for device... [%s]", device_address_.c_str());
-      loop_rate.sleep();
+    catch (const LtmeReadException& /*e*/) {
+      RCLCPP_WARN(get_logger(), "Error reading data from device");
+      break;
     }
   }
 }
@@ -356,32 +360,32 @@ void LidarDriver::readScanBlock(ldcp_sdk::ScanBlock &scan_block)
 void LidarDriver::averageLaserScan(sensor_msgs::msg::LaserScan &laser_scan) const
 {
   if (average_factor_ != 1) {
-  auto final_size = laser_scan.ranges.size() / average_factor_;
-  for (std::size_t i = 0; i < final_size; i++) {
-    float ranges_total = 0;
-    float intensities_total = 0;
-    int count = 0;
-    for (std::size_t j = 0; j < average_factor_; j++) {
-      std::size_t index = i * average_factor_ + j;
-      if (laser_scan.ranges[index] != 0) {
-        ranges_total += laser_scan.ranges[index];
-        intensities_total += laser_scan.intensities[index];
-        count++;
+    auto final_size = laser_scan.ranges.size() / average_factor_;
+    for (std::size_t i = 0; i < final_size; i++) {
+      float ranges_total = 0;
+      float intensities_total = 0;
+      int count = 0;
+      for (std::size_t j = 0; j < average_factor_; j++) {
+        std::size_t index = i * average_factor_ + j;
+        if (laser_scan.ranges[index] != 0) {
+          ranges_total += laser_scan.ranges[index];
+          intensities_total += laser_scan.intensities[index];
+          count++;
+        }
+      }
+
+      if (count > 0) {
+        laser_scan.ranges[i] = ranges_total / count;
+        laser_scan.intensities[i] = (int)(intensities_total / count);
+      }
+      else {
+        laser_scan.ranges[i] = 0;
+        laser_scan.intensities[i] = 0;
       }
     }
 
-    if (count > 0) {
-      laser_scan.ranges[i] = ranges_total / count;
-      laser_scan.intensities[i] = (int)(intensities_total / count);
-    }
-    else {
-      laser_scan.ranges[i] = 0;
-      laser_scan.intensities[i] = 0;
-    }
-  }
-
-  laser_scan.ranges.resize(final_size);
-  laser_scan.intensities.resize(final_size);
+    laser_scan.ranges.resize(final_size);
+    laser_scan.intensities.resize(final_size);
   }
 }
 
@@ -457,7 +461,6 @@ void LidarDriver::updateLaserScan(sensor_msgs::msg::LaserScan &laser_scan, const
     }
   }
 }
-
 
 void LidarDriver::querySerialService(const ltme_interfaces::srv::QuerySerial::Request::SharedPtr /*request*/,
     const ltme_interfaces::srv::QuerySerial::Response::SharedPtr response)

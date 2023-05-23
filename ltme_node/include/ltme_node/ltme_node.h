@@ -41,6 +41,7 @@ public:
   const static int DEFAULT_RECEIVER_SENSITIVITY_BOOST;
 
 private:
+  void configureServices();
   void getParameters();
   void performParameterChecks() const;
   ldcp_sdk::NetworkLocation parseDeviceAddress() const;
@@ -51,6 +52,7 @@ private:
   void averageLaserScan(sensor_msgs::msg::LaserScan &laser_scan) const;
   void performHibernation();
   void prepareLaserScan(sensor_msgs::msg::LaserScan &laser_scan, const ldcp_sdk::ScanBlock &scan_block);
+  void performLaserScan(sensor_msgs::msg::LaserScan &laser_scan, ldcp_sdk::ScanBlock &scan_block);
   void updateLaserScan(sensor_msgs::msg::LaserScan &laser_scan, const ldcp_sdk::ScanBlock &scan_block) const;
 
   // Publishers
@@ -79,8 +81,6 @@ private:
 
   std::string device_model_;
   std::string device_address_;
-  in_addr_t address_;
-  in_port_t port_;
   std::string enforced_transport_mode_;
   std::string frame_id_;
   bool invert_frame_;
