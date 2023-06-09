@@ -436,7 +436,7 @@ void LidarDriver::prepareLaserScan(sensor_msgs::msg::LaserScan &laser_scan, cons
   laser_scan.angle_min = (!invert_frame_) ? angle_min_ : angle_max_;
   laser_scan.angle_max = (!invert_frame_) ? angle_max_ : angle_min_;
   laser_scan.angle_increment = ((!invert_frame_) ? 1 : -1) * 2 * M_PIf / beam_count * average_factor_;
-  laser_scan.time_increment = 1.0 / scan_frequency_ / beam_count * average_factor_;
+  laser_scan.time_increment = 0.0;  // set time_increment to zero because of rviz bug
   laser_scan.scan_time = 1.0 / scan_frequency_;
   laser_scan.range_min = range_min_;
   laser_scan.range_max = range_max_;
