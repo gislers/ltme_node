@@ -1,11 +1,11 @@
-cmake_minimum_required(VERSION 3.8)
+cmake_minimum_required(VERSION 2.8.3)
 
 project(ldcp_sdk)
 
 option(BUILD_DEVICE_MANAGER "Build device manager" OFF)
 
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-  add_compile_options(-std=c++17)
+  add_compile_options(-std=c++11)
   add_compile_options(-fvisibility=hidden)
 endif()
 

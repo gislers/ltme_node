@@ -1,11 +1,9 @@
 cmake_minimum_required(VERSION 3.8)
 project(ltme_node)
 
-set(CMAKE_CXX_STANDARD 17)
-
-if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  add_compile_options(-Wall -Wextra -Wpedantic)
-endif()
+add_library(compile_features17 INTERFACE)
+target_compile_features(compile_features17 INTERFACE cxx_std_17)
+target_compile_options(compile_features17 INTERFACE "-Wall;-Wextra;-Wpedantic")
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
@@ -47,19 +45,17 @@ include_directories(
 
 add_executable(ltme_node src/ltme_node.cpp)
 ament_target_dependencies(ltme_node rclcpp sensor_msgs std_msgs std_srvs ltme_interfaces)
-target_link_libraries(ltme_node ldcp_sdk)
+target_link_libraries(ltme_node ldcp_sdk compile_features17)
 
 add_executable(update_ip_address src/update_ip_address.cpp)
-target_link_libraries(update_ip_address ldcp_sdk)
+target_link_libraries(update_ip_address ldcp_sdk compile_features17)
 
 if(OPENSSL_FOUND)
   add_executable(update_firmware
     "src/update_firmware.cpp"
   )
 
-  target_link_libraries(update_firmware
-    ldcp_sdk
-    OpenSSL::Crypto
+  target_link_libraries(update_firmware ldcp_sdk OpenSSL::Crypto compile_features17
   )
 endif()
 
