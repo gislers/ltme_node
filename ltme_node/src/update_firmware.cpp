@@ -5,7 +5,7 @@
 #include "ldcp/bootloader.h"
 
 #include <arpa/inet.h>
-#include <openssl/md5.h>
+#include <openssl/evp.h>
 
 static const int FIRMWARE_BLOCK_SIZE = 512;
 
@@ -107,8 +107,9 @@ int main(int argc, char* argv[])
     }
   }
 
-  uint8_t md5_hash[MD5_DIGEST_LENGTH];
-  MD5_CTX md5_context;
+  EVP_MD_CTX* mdctx;
+  unsigned char* md5_digest;
+  unsigned int md5_digest_len = EVP_MD_size(EVP_md5());
 
   bootloader.setTimeout(5000);
   try {
@@ -118,7 +119,8 @@ int main(int argc, char* argv[])
     std::cout << "done" << std::endl;
     std::cout << "Writing firmware to device" << std::flush;
 
-    MD5_Init(&md5_context);
+    mdctx = EVP_MD_CTX_new();
+    EVP_DigestInit_ex(mdctx, EVP_md5(), nullptr);
 
     std::vector<char> buffer(FIRMWARE_BLOCK_SIZE, 0);
     while (!firmware_file.eof()) {
@@ -126,7 +128,7 @@ int main(int argc, char* argv[])
       int count = firmware_file.gcount();
       if (bootloader.writeData((const uint8_t*)buffer.data(), count) != ldcp_sdk::no_error)
         throw std::runtime_error("");
-      MD5_Update(&md5_context, buffer.data(), count);
+      EVP_DigestUpdate(mdctx, buffer.data(), count);
       std::cout << "." << std::flush;
     }
     std::cout << std::endl;
@@ -137,12 +139,11 @@ int main(int argc, char* argv[])
     std::cerr << "Failed to write firmware data to device" << std::endl;
     return -1;
   }
+  md5_digest = (unsigned char*)OPENSSL_malloc(md5_digest_len);
+  EVP_DigestFinal_ex(mdctx, md5_digest, &md5_digest_len);
+  EVP_MD_CTX_free(mdctx);
 
-  MD5_Final(md5_hash, &md5_context);
-
-  bool passed = false;
-  if (bootloader.verifyHash(md5_hash, passed) == ldcp_sdk::no_error &&
-      passed) {
+  if (bool passed = false; bootloader.verifyHash(md5_digest, passed) == ldcp_sdk::no_error && passed) {
     bootloader.commitUpdate();
     bootloader.reboot();
     std::cout << "Firmware updated successfully" << std::endl;
